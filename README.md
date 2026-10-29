@@ -188,98 +188,229 @@ Al incrementar la carga paralela, el sistema saturó nuevamente la cola de petic
 ### 12. Evaluación del escenario de calidad
 **El modelo de escalabilidad vertical NO cumple satisfactoriamente con el requerimiento de calidad.** Aunque se amplíe el tamaño de la máquina virtual, la aplicación monohilo experimenta fallos por saturación (*ECONNRESET*) y bloqueos en el *Event Loop* bajo condiciones de concurrencia elevada. Se requiere obligatoriamente una estrategia de **escalabilidad horizontal** con balanceo de carga.
 
-### Parte 2 - Escalabilidad horizontal
 
-#### Crear el Balanceador de Carga
+## Parte 2 - Escalabilidad horizontal
 
-Antes de continuar puede eliminar el grupo de recursos anterior para evitar gastos adicionales y realizar la actividad en un grupo de recursos totalmente limpio.
+> **Región:** Chile Central · **Grupo de recursos:** `SCALABILITY_LAB` · **IP pública del balanceador:** `57.156.15.123`
+> **VM:** `Standard_B2ats_v2` (2 vCPU, 1 GiB RAM, ≈ 9,64 US$/mes) · **Sistema operativo:** Ubuntu Server 24.04 LTS · **Node.js:** v26.13.0 + `forever`
 
-1. El Balanceador de Carga es un recurso fundamental para habilitar la escalabilidad horizontal de nuestro sistema, por eso en este paso cree un balanceador de carga dentro de Azure tal cual como se muestra en la imágen adjunta.
+### 1. Infraestructura creada
 
-![](images/part2/part2-lb-create.png)
+#### 1.1 Grupo de recursos y red virtual
+Se creó el grupo de recursos `SCALABILITY_LAB` en *Chile Central* y dentro de él la red virtual `SCALABILITY_LAB_VIRTUAL_NETWORK` con espacio de direcciones `10.1.0.0/16` y una subred `SCALABILITY_LAB_SUBNET` `10.1.0.0/24` (251 direcciones utilizables).
 
-2. A continuación cree un *Backend Pool*, guiese con la siguiente imágen.
+![Grupo de recursos](images/part2/p2-01-grupo-recursos.png)
+![Espacio de direcciones de la VNet](images/part2/p2-02-vnet-espacio-direcciones.png)
+![Revisión de la VNet](images/part2/p2-03-vnet-revision.png)
+![Subredes](images/part2/p2-04-vnet-subredes.png)
 
-![](images/part2/part2-lb-bp-create.png)
+#### 1.2 Balanceador de carga, Backend Pool, Health Probe y regla
+Se creó un balanceador **Standard**, público y regional (`SCALABILITY_LAB_LOAD_BALANCER`), con:
 
-3. A continuación cree un *Health Probe*, guiese con la siguiente imágen.
+| Componente | Configuración |
+|---|---|
+| Front-end | `LoadBalancerFrontEnd`, IP pública Standard `57.156.15.123` |
+| Backend Pool | `SCALABILITY_LAB_BACKEND_POOL` (VM1, VM2, VM3) |
+| Health Probe | `SCALABILITY_LAB_HEALTH_PROBE` – TCP, puerto 3000, intervalo 5 s, umbral 2 |
+| Load Balancing Rule | `SCALABILITY_LAB_LOAD_BALANCING_RULE` – TCP, puerto 80 → 3000, persistencia de sesión **Ninguna**, tiempo de inactividad 4 min |
 
-![](images/part2/part2-lb-hp-create.png)
+![Revisión del balanceador](images/part2/p2-05-lb-revision.png)
+![Overview del balanceador](images/part2/p2-06-lb-overview.png)
+![Health Probe](images/part2/p2-07-health-probe.png)
+![Regla de balanceo (1)](images/part2/p2-08-lb-regla-1.png)
+![Regla de balanceo (2)](images/part2/p2-09-lb-regla-2.png)
 
-4. A continuación cree un *Load Balancing Rule*, guiese con la siguiente imágen.
+#### 1.3 Máquinas virtuales (nodos)
+Se crearon tres VM `Standard_B2ats_v2` en tres zonas de disponibilidad distintas (VM1→zona 1, VM2→zona 2, VM3→zona 3), con llave SSH propia cada una (`VM1_key`, `VM2_key`, `VM3_key`), en la VNet y subred anteriores y asociadas al balanceador y a su Backend Pool. Las tres comparten el *Network Security Group* `SCALABILITY_LAB_NETWORK_SECURITY_GROUP`, con las reglas **SSH (22, prioridad 1000)** y **Port_3000 (TCP 3000, prioridad 1010)**.
 
-![](images/part2/part2-lb-lbr-create.png)
+![Tamaño de la VM](images/part2/p2-10-vm-tamano.png)
+![VM1 – zona de disponibilidad 1](images/part2/p2-11-vm1-zona.png)
+![VM1 – redes](images/part2/p2-12-vm1-redes.png)
+![Network Security Group](images/part2/p2-13-nsg-reglas.png)
+![Asociación de la VM al balanceador](images/part2/p2-14-vm-asociar-lb.png)
+![VM1 creada](images/part2/p2-15-vm1-overview.png)
+![VM2 – revisión](images/part2/p2-16-vm2-revision.png)
+![VM2 creada](images/part2/p2-17-vm2-overview.png)
+![VM3 – zona de disponibilidad 3](images/part2/p2-18-vm3-zona3.png)
 
-5. Cree una *Virtual Network* dentro del grupo de recursos, guiese con la siguiente imágen.
+> **Nota sobre las IP públicas:** la suscripción de estudiante permite como máximo **3 IP públicas** por región. Una la consume el balanceador y las otras dos las VM1 y VM2, por lo que la **VM3 se creó sin IP pública**. Se administra por SSH saltando desde la VM1 (`ssh -i ~/VM3_key.pem vm3@10.1.0.6`) y recibe el tráfico normalmente a través del balanceador (IP privada `10.1.0.6`). Para que la VM3 pudiera descargar paquetes (nvm, npm) se utilizó la salida a Internet por defecto.
 
-![](images/part2/part2-vn-create.png)
+![Direcciones IP públicas](images/part2/p2-19-ips-publicas.png)
 
-#### Crear las maquinas virtuales (Nodos)
+#### 1.4 Backend Pool con las 3 VM
+![Backend Pool con VM1, VM2 y VM3](images/part2/p2-20-backend-pool-3vms.png)
 
-Ahora vamos a crear 3 VMs (VM1, VM2 y VM3) con direcciones IP públicas standar en 3 diferentes zonas de disponibilidad. Después las agregaremos al balanceador de carga.
+#### 1.5 Recursos del grupo (18 en total)
+El grupo contiene: balanceador, IP del balanceador, NSG, VNet, 3 VM, 3 discos, 3 interfaces de red, 3 llaves SSH y 2 IP públicas de VM.
 
-1. En la configuración básica de la VM guíese por la siguiente imágen. Es importante que se fije en la "Avaiability Zone", donde la VM1 será 1, la VM2 será 2 y la VM3 será 3.
+![Recursos del grupo (1)](images/part2/p2-21-rg-recursos-1.png)
+![Recursos del grupo (2)](images/part2/p2-22-rg-recursos-2.png)
+![Recursos del grupo (3)](images/part2/p2-23-rg-recursos-3.png)
+![Recursos del grupo (4)](images/part2/p2-24-rg-recursos-4.png)
 
-![](images/part2/part2-vm-create1.png)
+#### 1.6 Despliegue de la aplicación en cada VM
+En cada VM se instaló `git`, `nvm`/Node.js (en Ubuntu 24.04 fue necesario `sudo apt-get install -y libatomic1`), se clonó el repositorio, se ejecutó `npm install` y se levantó la app con `forever start FibonacciApp.js`. Verificación local con `curl localhost:3000/fibonacci/6` → `The answer is 8`:
 
-2. En la configuración de networking, verifique que se ha seleccionado la *Virtual Network*  y la *Subnet* creadas anteriormente. Adicionalmente asigne una IP pública y no olvide habilitar la redundancia de zona.
+![VM1](images/part2/p2-25-vm1-forever-curl.png)
+![VM2](images/part2/p2-26-vm2-forever-curl.png)
+![VM3](images/part2/p2-27-vm3-forever-curl.png)
 
-![](images/part2/part2-vm-create2.png)
+### 2. Verificación del sistema a través del balanceador
 
-3. Para el Network Security Group seleccione "avanzado" y realice la siguiente configuración. No olvide crear un *Inbound Rule*, en el cual habilite el tráfico por el puerto 3000. Cuando cree la VM2 y la VM3, no necesita volver a crear el *Network Security Group*, sino que puede seleccionar el anteriormente creado.
+Consumo de los endpoints por la IP pública del balanceador:
 
-![](images/part2/part2-vm-create3.png)
+* `http://57.156.15.123/` → `Hello World`
+* `http://57.156.15.123/fibonacci/6` → `The answer is 8`
+* `http://57.156.15.123/fibonacci/1` → `The answer is 1`
 
-4. Ahora asignaremos esta VM a nuestro balanceador de carga, para ello siga la configuración de la siguiente imágen.
+![/fibonacci/6](images/part2/p2-28-navegador-fibonacci6.png)
+![/](images/part2/p2-29-navegador-hello.png)
+![/fibonacci/1](images/part2/p2-30-navegador-fibonacci1.png)
 
-![](images/part2/part2-vm-create4.png)
+La métrica **Health Probe Status** (dividida por *Backend IP Address*) muestra las tres instancias (`10.1.0.4`, `10.1.0.5`, `10.1.0.6`) pasando a estado saludable (100 %) una vez la aplicación estuvo arriba en cada una; el balanceador solo enruta a nodos saludables.
 
-5. Finalmente debemos instalar la aplicación de Fibonacci en la VM. para ello puede ejecutar el conjunto de los siguientes comandos, cambiando el nombre de la VM por el correcto
+![Health Probe por IP](images/part2/p2-31-health-probe-split.png)
+![Health Probe promedio](images/part2/p2-32-health-probe-total.png)
+
+### 3. Informe de Newman 1 (punto 2): 2 procesos en paralelo
+
+Prueba ejecutada desde el PC local contra el balanceador (`n = 1.000.000`, `-n 10` iteraciones, 2 procesos de Newman simultáneos):
 
 ```
-git clone https://github.com/daprieto1/ARSW_LOAD-BALANCING_AZURE.git
-
-curl -o- https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash
-source /home/vm1/.bashrc
-nvm install node
-
-cd ARSW_LOAD-BALANCING_AZURE/FibonacciApp
-npm install
-
-npm install forever -g
-forever start FibonacciApp.js
-```
-
-Realice este proceso para las 3 VMs, por ahora lo haremos a mano una por una, sin embargo es importante que usted sepa que existen herramientas para aumatizar este proceso, entre ellas encontramos Azure Resource Manager, OsDisk Images, Terraform con Vagrant y Paker, Puppet, Ansible entre otras.
-
-#### Probar el resultado final de nuestra infraestructura
-
-1. Porsupuesto el endpoint de acceso a nuestro sistema será la IP pública del balanceador de carga, primero verifiquemos que los servicios básicos están funcionando, consuma los siguientes recursos:
-
-```
-http://52.155.223.248/
-http://52.155.223.248/fibonacci/1
-```
-
-2. Realice las pruebas de carga con `newman` que se realizaron en la parte 1 y haga un informe comparativo donde contraste: tiempos de respuesta, cantidad de peticiones respondidas con éxito, costos de las 2 infraestrucruras, es decir, la que desarrollamos con balanceo de carga horizontal y la que se hizo con una maquina virtual escalada.
-
-3. Agregue una 4 maquina virtual y realice las pruebas de newman, pero esta vez no lance 2 peticiones en paralelo, sino que incrementelo a 4. Haga un informe donde presente el comportamiento de la CPU de las 4 VM y explique porque la tasa de éxito de las peticiones aumento con este estilo de escalabilidad.
-
-```
-newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
-newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
 newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10 &
 newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALANCING_AZURE].postman_environment.json -n 10
 ```
 
-**Preguntas**
+![Newman proceso A](images/part2/p2-33-newman-2proc-a.png)
+![Newman proceso B](images/part2/p2-34-newman-2proc-b.png)
 
-* ¿Cuáles son los tipos de balanceadores de carga en Azure y en qué se diferencian?, ¿Qué es SKU, qué tipos hay y en qué se diferencian?, ¿Por qué el balanceador de carga necesita una IP pública?
-* ¿Cuál es el propósito del *Backend Pool*?
-* ¿Cuál es el propósito del *Health Probe*?
-* ¿Cuál es el propósito de la *Load Balancing Rule*? ¿Qué tipos de sesión persistente existen, por qué esto es importante y cómo puede afectar la escalabilidad del sistema?.
-* ¿Qué es una *Virtual Network*? ¿Qué es una *Subnet*? ¿Para qué sirven los *address space* y *address range*?
-* ¿Qué son las *Availability Zone* y por qué seleccionamos 3 diferentes zonas?. ¿Qué significa que una IP sea *zone-redundant*?
-* ¿Cuál es el propósito del *Network Security Group*?
-* Informe de newman 1 (Punto 2)
-* Presente el Diagrama de Despliegue de la solución.
+| Métrica | Proceso A | Proceso B |
+|---|---|---|
+| Iteraciones / peticiones | 10 / 10 | 10 / 10 |
+| Fallos | **0** | **0** |
+| Duración total | ≈ 1 m 6,9 s | ≈ 1 m 4,8 s |
+| Tiempo de respuesta promedio | 6,4 s (mín 6,4 – máx 6,8 s) | 6,4 s (mín 6,3 – máx 6,5 s) |
+| Datos recibidos | 2,09 MB | 2,09 MB |
+
+**Comportamiento de la CPU.** Con 2 peticiones simultáneas el balanceador las reparte en nodos distintos; en las métricas aparecen **picos de ≈ 100 % de CPU en dos VM a la vez**, mientras la tercera permanece cercana al reposo. Cada petición tiene su propio núcleo/hilo dedicado, por eso no hay cola.
+
+![CPU de VM1](images/part2/p2-35-cpu-vm1.png)
+![CPU de las 3 VM (grupo de recursos)](images/part2/p2-36-cpu-3vms-rg.png)
+
+#### Comparación con la Parte 1 (escalado vertical)
+
+| Aspecto | Parte 1 – 1 VM escalada (`B1ls` → `B2ms`/`B2as_v2`) | Parte 2 – 3 VM `B2ats_v2` + balanceador |
+|---|---|---|
+| Tiempo promedio por petición (2 procesos) | *[completar con la tabla de la Parte 1, §4 y §6]* | **≈ 6,4 s** (muy cercano al tiempo de una sola petición sin contención) |
+| Peticiones con éxito (2 procesos × 10) | *[completar; en la Parte 1 hubo `ECONNRESET`]* | **20 / 20 (100 %)** |
+| Punto único de falla | Sí (1 VM) | No (3 VM en 3 zonas; el balanceador saca del pool a las caídas) |
+| Aprovechamiento de CPU | 1 solo hilo de Node.js (los vCPU extra quedan ociosos) | 3 procesos de Node.js independientes |
+| Tiempo de inactividad al escalar | Reinicio de la VM al cambiar de tamaño | Ninguno: se agregan nodos sin tocar los demás |
+| Costo mensual aproximado (compute) | `B1ls` ≈ 3,8 US$ → `B2ms` ≈ 60 US$ \* | 3 × 9,64 = **≈ 28,9 US$** + balanceador Standard \*\* |
+
+\* Precios de lista aproximados para Linux pay-as-you-go; el valor exacto de la VM de la Parte 1 depende de la región y debe verificarse en la calculadora de Azure.
+\*\* El Standard Load Balancer y las IP públicas Standard se facturan aparte (≈ 18 US$/mes la regla/balanceador y ≈ 3,6 US$/mes por IP, valores de referencia). Aun así, la infraestructura horizontal con VM pequeñas es más económica que una VM grande y, además, es la única que mejora con la concurrencia y tolera fallos.
+
+**Conclusión del informe 1:** con 2 peticiones en paralelo, la infraestructura horizontal responde el 100 % de las peticiones y sin degradación de tiempos, porque cada petición CPU-bound se atiende en una VM distinta.
+
+### 4. Informe de Newman 2 (punto 3): 4 procesos en paralelo
+
+#### 4.1 Limitación: no fue posible crear la 4.ª VM
+El punto 3 pide agregar una cuarta VM. **No fue posible** por la cuota de la suscripción *Azure for Students*: la región Chile Central permite **6 vCPU regionales totales** y ya estaban en uso las 6 (3 VM × 2 vCPU). Al intentar crear la VM4 Azure respondió que se necesitaban 2 vCPU y solo quedaban 0 (de 6). Se solicitó un aumento de cuota a 8 vCPU, que fue **rechazado**, y los tamaños de 1 vCPU (`B1ls`, `B1s`, `A1_v2`) que aparecen en el selector tampoco pueden usarse por la misma razón (0 vCPU libres). Evidencias:
+
+![Cuota de vCPU 6/6 (100 %)](images/part2/p2-37-cuota-vcpu-1.png)
+![Solicitud de aumento de cuota](images/part2/p2-38-cuota-vcpu-2.png)
+![Tamaños de 1 vCPU listados pero sin cuota](images/part2/p2-39-tamanos-vm4.png)
+![Cuota por familia Basv2 (6 de 10 vCPU)](images/part2/p2-40-cuota-familia-basv2.png)
+
+> Dado esto, la prueba de 4 procesos en paralelo se ejecutó contra **las 3 VM disponibles** (4 peticiones concurrentes > 3 nodos). Es un escenario más exigente que el del enunciado y permite además analizar qué ocurre cuando la concurrencia supera el número de nodos.
+
+#### 4.2 Resultados
+```
+newman run ... -n 10 &   (×3)
+newman run ... -n 10     (4.º, en primer plano)
+```
+
+![Newman: 4 procesos en paralelo](images/part2/p2-35b-newman-4proc.png)
+
+| Métrica | Resultado (4 procesos × 10 peticiones) |
+|---|---|
+| Peticiones con éxito | **33 / 40 (82,5 %)** |
+| Fallos | 7 × `read ECONNRESET` |
+| Tiempo de respuesta promedio | 8,0 – 10,5 s según proceso |
+| Tiempo máximo | 12,2 – 16,8 s |
+
+(Comparar con la Parte 1, donde con 4 procesos sobre una sola VM la mayor parte de las peticiones fallaba o se degradaba fuertemente.)
+
+#### 4.3 Comportamiento de la CPU
+La gráfica de CPU por VM (métrica *Percentage CPU* dividida por `ResourceId`) muestra, para la prueba con 4 procesos, **picos simultáneos de ≈ 100 % en las tres VM**, sostenidos durante toda la prueba, frente a los picos en solo dos VM de la prueba con 2 procesos. Es decir, el balanceador distribuyó la carga y todos los nodos trabajaron al límite; ningún nodo quedó ocioso mientras otro se saturaba. Además se verificó que no hubo reinicios de `forever` ni procesos terminados por falta de memoria (uptime continuo de ≈ 43–52 min en cada VM al final de la sesión y sin entradas de *OOM*).
+
+![CPU de las 3 VM durante las pruebas](images/part2/p2-41-cpu-3vms-monitor.png)
+![Uptime de forever en VM2](images/part2/p2-42-uptime-vm2.png)
+![Uptime de forever en VM1](images/part2/p2-43-uptime-vm1-dmesg.png)
+
+#### 4.4 ¿Por qué aumentó la tasa de éxito con la escalabilidad horizontal?
+* Node.js ejecuta el cálculo de Fibonacci de forma **síncrona en un único hilo**: mientras atiende una petición, el *event loop* está bloqueado y no atiende nada más. En una sola VM (por grande que sea) las peticiones concurrentes se encolan detrás de la que se está calculando.
+* Con balanceo de carga **cada VM atiende una petición a la vez en paralelo real** (3 procesos independientes, 3 CPU distintas), de modo que con ≤ 3 peticiones simultáneas no hay cola y la tasa de éxito es del 100 % (informe 1).
+* Con 4 peticiones simultáneas y 3 nodos, una de ellas debe esperar. Mientras el *event loop* está bloqueado, el servidor no puede atender los sockets y Node cierra las conexiones *keep-alive* inactivas (`keepAliveTimeout` por defecto de 5 s) que el cliente intenta reutilizar, lo que se manifiesta como `read ECONNRESET`. Esto explica los 7 fallos, pero aun así la tasa (82,5 %) es muy superior a la de una única VM, y con una 4.ª VM (una por proceso) se esperaría volver a ≈ 100 %.
+* Además, el balanceador deja de enviar tráfico a una instancia que falle el *Health Probe*, aportando disponibilidad.
+
+### 5. Preguntas
+
+**¿Cuáles son los tipos de balanceadores de carga en Azure y en qué se diferencian? ¿Qué es SKU, qué tipos hay y en qué se diferencian? ¿Por qué el balanceador de carga necesita una IP pública?**
+
+* *Por exposición:* **público** (front-end con IP pública; balancea tráfico de Internet hacia las VM) e **interno/privado** (front-end con IP privada de la VNet; balancea tráfico entre capas internas). Por *capa*, el **Azure Load Balancer** trabaja en la capa 4 (TCP/UDP), mientras que **Application Gateway** (capa 7, HTTP/HTTPS, WAF, rutas por URL) y **Front Door / Traffic Manager** (global, DNS/HTTP) son otras opciones de Azure para balanceo de capa 7 o global. El *Load Balancer* también puede ser **regional** o **global (cross-region)**.
+* *SKU* (*Stock Keeping Unit*) es el nivel/variante de servicio del recurso: define características, límites, SLA y precio. Para Load Balancer: **Basic** (retirado en septiembre de 2025; sin zonas ni SLA, hasta 300 instancias, abierto por defecto), **Standard** (zonas de disponibilidad, SLA 99,99 %, hasta 1000 instancias, *secure by default*: requiere NSG, soporta reglas de salida y puertos HA) y **Gateway** (para encadenar *network virtual appliances*, como firewalls). Las IP públicas también tienen SKU Basic/Standard y deben coincidir con el del balanceador (aquí, Standard).
+* *IP pública:* es el punto de entrada (*front-end*) por el que los clientes de Internet alcanzan el servicio; el balanceador la publica y reenvía el tráfico (DNAT) a las IP privadas del *Backend Pool*. Sin ella, el balanceador solo sería accesible desde dentro de la red (sería un balanceador interno).
+
+**¿Cuál es el propósito del *Backend Pool*?**
+Es el conjunto de instancias (interfaces de red de las VM o *scale sets*) que reciben el tráfico balanceado. Define a qué nodos puede enviar peticiones el balanceador; agregar o quitar VM del pool es la forma de escalar horizontalmente sin cambiar el punto de acceso. Aquí contiene VM1, VM2 y VM3.
+
+**¿Cuál es el propósito del *Health Probe*?**
+Verifica periódicamente (aquí, TCP al puerto 3000 cada 5 s, con umbral de 2 fallos) si cada instancia del pool puede atender tráfico. Si una instancia falla la sonda, el balanceador deja de enviarle nuevas conexiones hasta que vuelve a responder, lo que da tolerancia a fallos y evita enviar clientes a un nodo caído.
+
+**¿Cuál es el propósito de la *Load Balancing Rule*? ¿Qué tipos de sesión persistente existen, por qué es importante y cómo puede afectar la escalabilidad?**
+Define cómo se distribuye el tráfico: asocia un front-end (IP + puerto, aquí 80/TCP) con un Backend Pool y un puerto de destino (3000), usando un *Health Probe*. Por defecto distribuye por *hash* de 5 tuplas (IP origen, puerto origen, IP destino, puerto destino, protocolo).
+*Persistencia de sesión (afinidad):* **Ninguna** (hash de 5 tuplas, cada conexión puede ir a un nodo distinto), **IP de cliente** (hash de 2 tuplas: misma IP de origen → mismo nodo) e **IP de cliente y protocolo** (3 tuplas). Es importante cuando la aplicación guarda estado en memoria del servidor (sesiones, carritos), porque el cliente debe volver al mismo nodo. Sin embargo, afecta la escalabilidad: puede dejar el reparto desbalanceado (muchos clientes tras una misma IP/NAT irán a un solo nodo) y complica el escalado y la tolerancia a fallos; por eso se prefiere aplicaciones *stateless* (como esta) con persistencia **Ninguna**, o guardar el estado en un almacén externo.
+
+**¿Qué es una *Virtual Network*? ¿Qué es una *Subnet*? ¿Para qué sirven el *address space* y el *address range*?**
+Una **Virtual Network (VNet)** es una red privada y aislada en Azure donde se comunican entre sí los recursos (VM, balanceadores, etc.) y, opcionalmente, con Internet u otras redes. Una **subred** es una subdivisión de la VNet con un rango de direcciones propio que permite segmentar y aplicar políticas (NSG, rutas) por grupos de recursos. El **address space** es el bloque CIDR completo de la VNet (aquí `10.1.0.0/16`, 65.536 direcciones) y el **address range** (rango/prefijo de la subred) es el trozo de ese espacio asignado a cada subred (aquí `10.1.0.0/24`, 256 direcciones, 251 utilizables porque Azure reserva 5). Los rangos de las subredes no deben solaparse y deben caber dentro del espacio de la VNet.
+
+**¿Qué son las *Availability Zone* y por qué seleccionamos 3 diferentes zonas? ¿Qué significa que una IP sea *zone-redundant*?**
+Son ubicaciones físicamente separadas dentro de una región (con energía, red y refrigeración independientes). Al repartir VM1, VM2 y VM3 en las zonas 1, 2 y 3, la caída de un centro de datos completo solo afecta a una de las tres VM y el servicio sigue vivo (SLA superior). Una IP pública **zone-redundant** es una IP Standard que existe simultáneamente en las tres zonas: sigue disponible aunque falle una de ellas, a diferencia de una IP *zonal* (atada a una sola zona).
+
+**¿Cuál es el propósito del *Network Security Group*?**
+Es un firewall de capa 3/4 con reglas de entrada y salida (por IP, puerto, protocolo, prioridad) que permite o deniega el tráfico hacia las interfaces/subredes. Es obligatorio con el balanceador Standard (cerrado por defecto). Aquí permite SSH (22) para administración y el puerto 3000 de la aplicación.
+
+**Informe de Newman 1 (punto 2):** ver la sección [3](#3-informe-de-newman-1-punto-2-2-procesos-en-paralelo) y la [4](#4-informe-de-newman-2-punto-3-4-procesos-en-paralelo).
+
+### 6. Diagrama de despliegue
+
+```mermaid
+flowchart TB
+    U["Clientes<br/>(navegador / Newman)"] -->|"HTTP :80"| PIP["IP pública Standard<br/>zone-redundant<br/>57.156.15.123"]
+
+    subgraph AZ["Azure · Chile Central · Grupo de recursos SCALABILITY_LAB"]
+        PIP --> LB["Standard Load Balancer (regional)<br/>Regla: TCP 80 → 3000<br/>Health Probe TCP 3000 · persistencia: Ninguna"]
+        subgraph VNET["VNet 10.1.0.0/16 · Subnet 10.1.0.0/24 · NSG (22, 3000)"]
+            subgraph Z1["Zona de disponibilidad 1"]
+                VM1["VM1 · B2ats_v2<br/>10.1.0.4<br/>Node.js + forever :3000"]
+            end
+            subgraph Z2["Zona de disponibilidad 2"]
+                VM2["VM2 · B2ats_v2<br/>10.1.0.5<br/>Node.js + forever :3000"]
+            end
+            subgraph Z3["Zona de disponibilidad 3"]
+                VM3["VM3 · B2ats_v2<br/>10.1.0.6 (sin IP pública)<br/>Node.js + forever :3000"]
+            end
+        end
+        LB -->|"Backend Pool"| VM1
+        LB --> VM2
+        LB --> VM3
+    end
+    ADM["Administrador<br/>SSH :22"] -.-> VM1
+    ADM -.-> VM2
+    VM1 -.->|"salto SSH"| VM3
+```
+
+### 7. Costos y limpieza
+Los recursos de esta práctica (VM, balanceador Standard e IP públicas Standard) generan costo mientras existan, incluso con las VM apagadas. Al terminar se elimina el grupo de recursos `SCALABILITY_LAB` para detener la facturación.
