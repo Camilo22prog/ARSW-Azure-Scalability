@@ -3,6 +3,9 @@
 
 ## Escalamiento en Azure con Maquinas Virtuales, Sacale Sets y Service Plans
 
+> 🎬 **Video de sustentación y demostración en Azure:**  
+> [https://www.youtube.com/watch?v=rc1NzjjeC1o](https://www.youtube.com/watch?v=rc1NzjjeC1o)
+
 ### Dependencias
 * Cree una cuenta gratuita dentro de Azure. Para hacerlo puede guiarse de esta [documentación](https://azure.microsoft.com/es-es/free/students/). Al hacerlo usted contará con $100 USD para gastar durante 12 meses.
 
@@ -412,3 +415,7 @@ flowchart TB
 
 ### 7. Costos y limpieza
 Los recursos de esta práctica (VM, balanceador Standard e IP públicas Standard) generan costo mientras existan, incluso con las VM apagadas. Al terminar se elimina el grupo de recursos `SCALABILITY_LAB` para detener la facturación.
+
+### 8. Video de sustentación
+Demostración completa de la infraestructura en Azure, ejecución de pruebas de carga con Newman (2 y 4 procesos concurrentes) y análisis de resultados:
+* 🔗 **Enlace YouTube:** [https://www.youtube.com/watch?v=rc1NzjjeC1o](https://www.youtube.com/watch?v=rc1NzjjeC1o)
