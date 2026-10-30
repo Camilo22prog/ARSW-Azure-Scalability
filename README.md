@@ -301,8 +301,6 @@ newman run ARSW_LOAD-BALANCING_AZURE.postman_collection.json -e [ARSW_LOAD-BALAN
 
 | Aspecto | Parte 1 – 1 VM escalada (`B1ls` → `B2ms`/`B2as_v2`) | Parte 2 – 3 VM `B2ats_v2` + balanceador |
 |---|---|---|
-| Tiempo promedio por petición (2 procesos) | *[completar con la tabla de la Parte 1, §4 y §6]* | **≈ 6,4 s** (muy cercano al tiempo de una sola petición sin contención) |
-| Peticiones con éxito (2 procesos × 10) | *[completar; en la Parte 1 hubo `ECONNRESET`]* | **20 / 20 (100 %)** |
 | Punto único de falla | Sí (1 VM) | No (3 VM en 3 zonas; el balanceador saca del pool a las caídas) |
 | Aprovechamiento de CPU | 1 solo hilo de Node.js (los vCPU extra quedan ociosos) | 3 procesos de Node.js independientes |
 | Tiempo de inactividad al escalar | Reinicio de la VM al cambiar de tamaño | Ninguno: se agregan nodos sin tocar los demás |
